@@ -1,6 +1,4 @@
-package Domain;
-
-import org.springframework.boot.autoconfigure.ldap.embedded.EmbeddedLdapProperties;
+package com.example.chatserverweb.Domain;
 
 public class Client {
     private String name;

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Chat</title>
+  <style>body{font-family:sans-serif;margin:20px} #log{border:1px solid #ccc;height:240px;overflow:auto;padding:8px;margin-top:8px}</style>
+</head>
+<body>
+<h3>WebSocket Chat</h3>
+
+<label>Name: <input id="name" placeholder="yourName"></label>
+<button id="login">Login</button>
+<br/><br/>
+<label>Message: <input id="msg" placeholder="Hello"></label>
+<button id="send">Send</button>
+
+<div id="log"></div>
+
+<script>
+  const logEl = document.getElementById('log');
+  const ws = new WebSocket('ws://localhost:8080/chat');
+
+  function log(line){ const p=document.createElement('div'); p.textContent=line; logEl.appendChild(p); logEl.scrollTop=logEl.scrollHeight; }
+
+  ws.onopen = () => log('Connected.');
+  ws.onmessage = (e) => log(e.data);
+  ws.onclose = () => log('Disconnected.');
+
+  document.getElementById('login').onclick = () => {
+    const name = document.getElementById('name').value || 'anon';
+    ws.send(`LOGIN|${name}`);
+  };
+
+  document.getElementById('send').onclick = () => {
+    const text = document.getElementById('msg').value || '';
+    ws.send(`MSG|${text}`);
+    document.getElementById('msg').value = '';
+  };
+</script>
+</body>
+</html>

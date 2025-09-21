@@ -1,7 +1,5 @@
-package Domain;
+package com.example.chatserverweb.Domain;
 
-import java.awt.*;
-import java.lang.reflect.Type;
 import java.util.Date;
 import java.util.Objects;
 
