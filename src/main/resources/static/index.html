@@ -1,41 +1,180 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <title>Chat</title>
-  <style>body{font-family:sans-serif;margin:20px} #log{border:1px solid #ccc;height:240px;overflow:auto;padding:8px;margin-top:8px}</style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>WebSocket Chat</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/emoji-picker-element@^1"></script>
+  <style>
+    #log::-webkit-scrollbar { width: 8px; }
+    #log::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+    #log::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
+    #log::-webkit-scrollbar-thumb:hover { background: #555; }
+    emoji-picker { width: 100%; max-height: 300px; }
+  </style>
 </head>
-<body>
-<h3>WebSocket Chat</h3>
+<body class="bg-gray-100 min-h-screen flex flex-col">
+<div class="container mx-auto p-4 max-w-2xl flex-grow">
+  <h3 class="text-2xl font-bold text-gray-800 mb-4">WebSocket Chat</h3>
 
-<label>Name: <input id="name" placeholder="yourName"></label>
-<button id="login">Login</button>
-<br/><br/>
-<label>Message: <input id="msg" placeholder="Hello"></label>
-<button id="send">Send</button>
+  <!-- Login Section -->
+  <div class="bg-white p-4 rounded-lg shadow mb-4">
+    <div class="flex gap-2">
+      <input id="name" placeholder="Your name" class="flex-grow p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+      <button id="login" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition">Login</button>
+    </div>
+  </div>
 
-<div id="log"></div>
+  <!-- Chat Log -->
+  <div id="log" class="bg-white p-4 rounded-lg shadow h-96 overflow-y-auto mb-4"></div>
+
+  <!-- Message Input -->
+  <div class="bg-white p-4 rounded-lg shadow mb-4">
+    <div class="flex gap-2">
+      <input id="msg" placeholder="Type a message..." class="flex-grow p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+      <button id="send" class="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition">Send</button>
+    </div>
+  </div>
+
+  <!-- Emoji Picker -->
+  <div class="bg-white p-4 rounded-lg shadow mb-4">
+    <div class="flex gap-2 items-center">
+      <input id="emoji" placeholder=":smile: or pick an emoji" class="flex-grow p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+      <button id="sendEmoji" class="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition">Send Emoji</button>
+    </div>
+    <emoji-picker class="mt-2"></emoji-picker>
+  </div>
+
+  <!-- Room Selection -->
+  <div class="bg-white p-4 rounded-lg shadow mb-4">
+    <div class="flex gap-2">
+      <input id="room" placeholder="Room name (e.g., general)" class="flex-grow p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+      <button id="joinRoom" class="bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600 transition">Join Room</button>
+    </div>
+  </div>
+
+  <!-- Private Message -->
+  <div class="bg-white p-4 rounded-lg shadow">
+    <div class="flex gap-2 flex-wrap">
+      <input id="privateTo" placeholder="Recipient name" class="flex-1 min-w-[120px] p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+      <input id="privateMsg" placeholder="Private message..." class="flex-1 min-w-[200px] p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+      <button id="sendPrivate" class="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition">Send Private</button>
+    </div>
+  </div>
+</div>
 
 <script>
   const logEl = document.getElementById('log');
+  const emojiInput = document.getElementById('emoji');
+  let username = '';
+
+  function now() {
+    return new Date().toLocaleString('en-US', { hour12: false });
+  }
+
+  function log(line, type = 'info') {
+    const p = document.createElement('div');
+    p.className = `p-2 rounded ${{
+      info: 'text-gray-700',
+      error: 'text-red-600 font-semibold',
+      text: 'text-gray-800',
+      emoji: 'text-purple-600',
+      private: 'text-blue-600 italic'
+    }[type] || 'text-gray-700'}`;
+    p.innerHTML = line; // Use innerHTML for emoji rendering
+    logEl.appendChild(p);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
   const ws = new WebSocket('ws://localhost:8080/chat');
 
-  function log(line){ const p=document.createElement('div'); p.textContent=line; logEl.appendChild(p); logEl.scrollTop=logEl.scrollHeight; }
-
-  ws.onopen = () => log('Connected.');
-  ws.onmessage = (e) => log(e.data);
-  ws.onclose = () => log('Disconnected.');
+  ws.onopen = () => log('Connected to server.', 'info');
+  ws.onmessage = (e) => {
+    const parts = e.data.split('|');
+    if (parts.length < 3) {
+      log(e.data, 'error');
+      return;
+    }
+    const sender = parts[0];
+    const timestamp = parts[1];
+    const type = parts[2];
+    const payload = parts.slice(3).join('|');
+    switch (type) {
+      case 'INFO':
+        log(`[${timestamp}] <span class="font-semibold">[INFO]</span> ${payload}`, 'info');
+        break;
+      case 'ERROR':
+        log(`[${timestamp}] <span class="font-semibold">[ERROR]</span> ${payload}`, 'error');
+        break;
+      case 'TEXT':
+        log(`[${timestamp}] <span class="font-semibold">${sender}</span>: ${payload}`, 'text');
+        break;
+      case 'EMOJI':
+        log(`[${timestamp}] <span class="font-semibold">${sender}</span> sent: ${payload}`, 'emoji');
+        break;
+      case 'PRIVATE':
+        log(`[${timestamp}] <span class="font-semibold">[PRIVATE] ${sender}</span>: ${payload}`, 'private');
+        break;
+      default:
+        log(e.data, 'info');
+    }
+  };
+  ws.onclose = () => log('Disconnected from server.', 'error');
 
   document.getElementById('login').onclick = () => {
-    const name = document.getElementById('name').value || 'anon';
-    ws.send(`LOGIN|${name}`);
+    username = document.getElementById('name').value.trim() || 'anon';
+    ws.send(`${username}|${now()}|LOGIN|${username}`);
+    log(`Logged in as ${username}`, 'info');
   };
 
   document.getElementById('send').onclick = () => {
-    const text = document.getElementById('msg').value || '';
-    ws.send(`MSG|${text}`);
+    const text = document.getElementById('msg').value.trim();
+    if (!username) return log('Please login first.', 'error');
+    if (!text) return log('Message cannot be empty.', 'error');
+    ws.send(`${username}|${now()}|TEXT|${text}`);
     document.getElementById('msg').value = '';
   };
+
+  document.getElementById('sendEmoji').onclick = () => {
+    const emoji = emojiInput.value.trim();
+    if (!username) return log('Please login first.', 'error');
+    if (!emoji) return log('Emoji cannot be empty.', 'error');
+    ws.send(`${username}|${now()}|EMOJI|${emoji}`);
+    emojiInput.value = '';
+  };
+
+  document.getElementById('joinRoom').onclick = () => {
+    const room = document.getElementById('room').value.trim() || 'general';
+    if (!username) return log('Please login first.', 'error');
+    ws.send(`${username}|${now()}|JOIN_ROOM|${room}`);
+    log(`Joined room: ${room}`, 'info');
+  };
+
+  document.getElementById('sendPrivate').onclick = () => {
+    const recipient = document.getElementById('privateTo').value.trim();
+    const msg = document.getElementById('privateMsg').value.trim();
+    if (!username) return log('Please login first.', 'error');
+    if (!recipient || !msg) return log('Recipient and message required.', 'error');
+    ws.send(`${username}|${now()}|PRIVATE|${recipient}|${msg}`);
+    document.getElementById('privateMsg').value = '';
+  };
+
+  // Emoji picker integration
+  document.querySelector('emoji-picker').addEventListener('emoji-click', (event) => {
+    emojiInput.value = event.detail.unicode;
+  });
+
+  // Enable sending messages with Enter key
+  document.getElementById('msg').addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') document.getElementById('send').click();
+  });
+  document.getElementById('emoji').addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') document.getElementById('sendEmoji').click();
+  });
+  document.getElementById('privateMsg').addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') document.getElementById('sendPrivate').click();
+  });
 </script>
 </body>
 </html>
