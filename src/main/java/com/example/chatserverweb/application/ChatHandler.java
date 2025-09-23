@@ -2,7 +2,7 @@ package com.example.chatserverweb.application;
 
 import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
-
+import java.sql.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
@@ -16,11 +16,56 @@ public class ChatHandler extends TextWebSocketHandler {
     private final Map<WebSocketSession, String> sessions = new ConcurrentHashMap<>();
     private final Map<String, Set<String>> rooms = new ConcurrentHashMap<>();
     private final Map<String, String> userRooms = new ConcurrentHashMap<>();
+    private final Map<String, String> userColors = new ConcurrentHashMap<>();
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    public ChatHandler() {
+        initDatabase();
+    }
+
+    private void initDatabase() {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:chat.db")) {
+            Statement stmt = conn.createStatement();
+            stmt.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT)");
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private boolean authenticate(String username, String password, WebSocketSession session) {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:chat.db")) {
+            PreparedStatement pstmt = conn.prepareStatement("SELECT password FROM users WHERE username = ?");
+            pstmt.setString(1, username);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                if (rs.getString("password").equals(password)) {
+                    if (users.containsKey(username)) {
+                        sendMsg(session, "SERVER|" + now() + "|ERROR|Username already in use.");
+                        return false;
+                    }
+                    return true;
+                } else {
+                    sendMsg(session, "SERVER|" + now() + "|ERROR|Invalid password.");
+                    return false;
+                }
+            } else {
+                // Register new user
+                PreparedStatement insert = conn.prepareStatement("INSERT INTO users (username, password) VALUES (?, ?)");
+                insert.setString(1, username);
+                insert.setString(2, password);
+                insert.executeUpdate();
+                return true;
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            sendMsg(session, "SERVER|" + now() + "|ERROR|Database error.");
+            return false;
+        }
+    }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
-        sendMsg(session, "SERVER|" + now() + "|INFO|Welcome! Please login: LOGIN|yourName");
+        sendMsg(session, "SERVER|" + now() + "|INFO|Welcome! Please login: LOGIN|yourName|yourPassword");
     }
 
     @Override
@@ -38,30 +83,79 @@ public class ChatHandler extends TextWebSocketHandler {
         String type = parts[2];
         String content = parts.length > 3 ? parts[3] : "";
 
+        if (type.equalsIgnoreCase("TEXT") && content.startsWith("/")) {
+            if (content.equalsIgnoreCase("/list")) {
+                String sender = sessions.get(session);
+                String room = userRooms.getOrDefault(sender, "general");
+                Set<String> roomUsers = rooms.getOrDefault(room, Collections.emptySet());
+                sendMsg(session, "SERVER|" + now() + "|INFO|Users in room: " + String.join(", ", roomUsers));
+                return;
+            }
+            if (content.startsWith("/w ")) {
+                String[] cmd = content.split(" ", 3);
+                if (cmd.length == 3) {
+                    String recipient = cmd[1];
+                    String msg = cmd[2];
+                    WebSocketSession recSession = users.get(recipient);
+                    String sender = sessions.get(session);
+                    if (recSession != null) {
+                        String color = userColors.getOrDefault(sender, "#000000");
+                        sendMsg(recSession, sender + "|" + color + "|" + now() + "|PRIVATE|" + msg);
+                        sendMsg(session, sender + "|" + color + "|" + now() + "|PRIVATE|" + msg);
+                    } else {
+                        sendMsg(session, "SERVER|" + now() + "|ERROR|User not found: " + recipient);
+                    }
+                }
+                return;
+            }
+        }
+
         switch (type.toUpperCase()) {
             case "LOGIN":
-                String username = content.split("\\|")[0];
-                users.put(username, session);
-                sessions.put(session, username);
-                userRooms.put(username, "general");
-                rooms.computeIfAbsent("general", k -> ConcurrentHashMap.newKeySet()).add(username);
-                broadcastRoom("general", "SERVER", now(), "INFO", username + " joined the chat.");
+                String[] creds = content.split("\\|", 2);
+                if (creds.length < 2) {
+                    sendMsg(session, "SERVER|" + now() + "|ERROR|Username and password required.");
+                    break;
+                }
+                String username = creds[0];
+                String password = creds[1];
+                if (authenticate(username, password, session)) {
+                    String color = String.format("#%06X", (int) (Math.random() * 0xFFFFFF));
+                    userColors.put(username, color);
+                    users.put(username, session);
+                    sessions.put(session, username);
+                    userRooms.put(username, "general");
+                    rooms.computeIfAbsent("general", k -> ConcurrentHashMap.newKeySet()).add(username);
+                    broadcastRoom("general", "SERVER", now(), "INFO", username + " joined the chat.");
+                }
                 break;
 
             case "TEXT":
                 String sender = sessions.get(session);
+                if (sender == null) {
+                    sendMsg(session, "SERVER|" + now() + "|ERROR|Please login first.");
+                    break;
+                }
                 String room = userRooms.getOrDefault(sender, "general");
                 broadcastRoom(room, sender, now(), "TEXT", content);
                 break;
 
             case "EMOJI":
                 sender = sessions.get(session);
+                if (sender == null) {
+                    sendMsg(session, "SERVER|" + now() + "|ERROR|Please login first.");
+                    break;
+                }
                 room = userRooms.getOrDefault(sender, "general");
                 broadcastRoom(room, sender, now(), "EMOJI", content);
                 break;
 
             case "JOIN_ROOM":
                 sender = sessions.get(session);
+                if (sender == null) {
+                    sendMsg(session, "SERVER|" + now() + "|ERROR|Please login first.");
+                    break;
+                }
                 String newRoom = content.split("\\|")[0];
                 String oldRoom = userRooms.getOrDefault(sender, "general");
                 rooms.getOrDefault(oldRoom, Collections.emptySet()).remove(sender);
@@ -78,9 +172,14 @@ public class ChatHandler extends TextWebSocketHandler {
                     String msg = priv[1];
                     WebSocketSession recSession = users.get(recipient);
                     sender = sessions.get(session);
+                    if (sender == null) {
+                        sendMsg(session, "SERVER|" + now() + "|ERROR|Please login first.");
+                        break;
+                    }
                     if (recSession != null) {
-                        sendMsg(recSession, sender + "|" + now() + "|PRIVATE|" + msg);
-                        sendMsg(session, sender + "|" + now() + "|PRIVATE|" + msg);
+                        String color = userColors.getOrDefault(sender, "#000000");
+                        sendMsg(recSession, sender + "|" + color + "|" + now() + "|PRIVATE|" + msg);
+                        sendMsg(session, sender + "|" + color + "|" + now() + "|PRIVATE|" + msg);
                     } else {
                         sendMsg(session, "SERVER|" + now() + "|ERROR|User not found: " + recipient);
                     }
@@ -97,8 +196,10 @@ public class ChatHandler extends TextWebSocketHandler {
         String user = sessions.remove(session);
         if (user != null) {
             users.remove(user);
+            userColors.remove(user);
             String room = userRooms.getOrDefault(user, "general");
             rooms.getOrDefault(room, Collections.emptySet()).remove(user);
+            userRooms.remove(user);
             broadcastRoom(room, "SERVER", now(), "INFO", user + " left the chat.");
         }
     }
@@ -111,7 +212,8 @@ public class ChatHandler extends TextWebSocketHandler {
 
     private void broadcastRoom(String room, String sender, String timestamp, String type, String content) {
         Set<String> roomUsers = rooms.getOrDefault(room, Collections.emptySet());
-        String msg = sender + "|" + timestamp + "|" + type + "|" + content;
+        String color = "SERVER".equals(sender) ? "#000000" : userColors.getOrDefault(sender, "#000000");
+        String msg = sender + "|" + color + "|" + timestamp + "|" + type + "|" + content;
         roomUsers.forEach(u -> {
             WebSocketSession s = users.get(u);
             if (s != null && s.isOpen()) sendMsg(s, msg);
@@ -121,4 +223,5 @@ public class ChatHandler extends TextWebSocketHandler {
     private String now() {
         return LocalDateTime.now().format(TIME);
     }
+
 }
