@@ -74,7 +74,7 @@ public class ChatHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         // Sender velkomstbesked når en ny forbindelse oprettes
-        sendMsg(session, "SERVER|" + now() + "|INFO|Welcome! Please login: LOGIN|yourName|yourPassword");
+        sendMsg(session, "SERVER|#000000|" + now() + "|INFO|Welcome! Please login: LOGIN|yourName|yourPassword");
     }
 
     @Override
