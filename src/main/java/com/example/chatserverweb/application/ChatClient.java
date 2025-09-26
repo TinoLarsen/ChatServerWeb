@@ -166,7 +166,7 @@ public class ChatClient extends Application {
     private void connectToWebSocket() {
         WebSocketContainer container = ContainerProvider.getWebSocketContainer();
         try {
-            URI uri = URI.create("ws://192.168.8.53:8080/chat");
+            URI uri = URI.create("ws://localhost:8080/chat");
             container.connectToServer(this, uri);
         } catch (DeploymentException | IOException ex) {
             LOGGER.log(Level.SEVERE, null, ex);
